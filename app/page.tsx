@@ -1,118 +1,149 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useLiveQuery } from "dexie-react-hooks";
 import { format, parseISO } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import {
-  CreditCard,
-  TrendingUp,
-  TrendingDown,
-  ShoppingBag,
-  Upload,
-  AlertTriangle,
-  Trash2,
+  CreditCard, TrendingUp, TrendingDown, ShoppingBag, Upload, AlertTriangle, Trash2,
 } from "lucide-react";
 import dynamic from "next/dynamic";
 import ImportModal from "@/components/ImportModal";
 import TransactionList from "@/components/TransactionList";
+import { db, seedRules } from "@/lib/db.client";
+import { categorizeTransaction } from "@/lib/categorize";
 
-// Recharts requires client-side rendering
 const CategoryChart = dynamic(() => import("@/components/CategoryChart"), { ssr: false });
 const MonthlyChart = dynamic(() => import("@/components/MonthlyChart"), { ssr: false });
-
-interface Stats {
-  total: number;
-  byCategory: { category: string; total: number; count: number }[];
-  monthlyTotals: { month: string; total: number; count: number }[];
-  topMerchants: { description: string; total: number; count: number }[];
-  recent: unknown[];
-  months: string[];
-}
 
 function formatBRL(value: number) {
   return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(value);
 }
 
 export default function Dashboard() {
-  const [stats, setStats] = useState<Stats | null>(null);
-  const [selectedMonth, setSelectedMonth] = useState<string>("");
-  const [categoryFilter, setCategoryFilter] = useState<string>("");
+  const [selectedMonth, setSelectedMonth] = useState("");
+  const [categoryFilter, setCategoryFilter] = useState("");
   const [showImport, setShowImport] = useState(false);
   const [activeTab, setActiveTab] = useState<"dashboard" | "transactions">("dashboard");
   const [recategorizing, setRecategorizing] = useState(false);
 
-  const fetchStats = useCallback(async () => {
-    const params = new URLSearchParams();
-    if (selectedMonth) params.set("month", selectedMonth);
-    const res = await fetch(`/api/stats?${params}`);
-    const data = await res.json();
-    setStats(data);
-  }, [selectedMonth]);
+  // Seed default rules on first load
+  useEffect(() => { seedRules(); }, []);
 
-  async function handleClearAll() {
-    if (!confirm("Apagar todas as transações? Esta ação não pode ser desfeita.")) return;
-    await fetch("/api/transactions?all=true", { method: "DELETE" });
-    setSelectedMonth("");
-    setStats(null);
-    fetchStats();
-  }
+  // Load all transactions reactively
+  const allTransactions = useLiveQuery(() => db.transactions.toArray(), []) ?? [];
 
-  async function handleRecategorize() {
-    setRecategorizing(true);
-    await fetch("/api/recategorize", { method: "POST" });
-    await fetchStats();
-    setRecategorizing(false);
-  }
+  // Available months (sorted descending)
+  const months = useMemo(() => {
+    const set = new Set(allTransactions.map((t) => t.date.substring(0, 7)));
+    return [...set].sort().reverse();
+  }, [allTransactions]);
 
+  // Auto-select latest month when data first loads
   useEffect(() => {
-    fetchStats();
-  }, [fetchStats]);
+    if (months.length && !selectedMonth) setSelectedMonth(months[0]);
+  }, [months, selectedMonth]);
 
-  // Set current month as default when months load
-  useEffect(() => {
-    if (stats?.months?.length && !selectedMonth) {
-      setSelectedMonth(stats.months[0]);
+  // Transactions filtered by selected month
+  const monthTransactions = useMemo(() =>
+    selectedMonth
+      ? allTransactions.filter((t) => t.date.startsWith(selectedMonth))
+      : allTransactions,
+    [allTransactions, selectedMonth]
+  );
+
+  // Stats derived from filtered transactions
+  const stats = useMemo(() => {
+    const expenses = monthTransactions.filter((t) => t.amount > 0);
+    const total = expenses.reduce((s, t) => s + t.amount, 0);
+
+    // By category
+    const catMap = new Map<string, { total: number; count: number }>();
+    for (const tx of expenses) {
+      const prev = catMap.get(tx.category) ?? { total: 0, count: 0 };
+      catMap.set(tx.category, { total: prev.total + tx.amount, count: prev.count + 1 });
     }
-  }, [stats?.months, selectedMonth]);
+    const byCategory = [...catMap.entries()]
+      .map(([category, v]) => ({ category, ...v }))
+      .sort((a, b) => b.total - a.total);
 
-  const prevMonth = stats?.monthlyTotals;
-  const prevTotal = prevMonth && prevMonth.length >= 2
-    ? prevMonth[prevMonth.length - 2]?.total ?? 0
-    : 0;
-  const trend = stats && prevTotal > 0
-    ? ((stats.total - prevTotal) / prevTotal) * 100
-    : null;
-
-  const topCategory = stats?.byCategory[0];
-  const totalTransactions = stats?.byCategory.reduce((s, c) => s + c.count, 0) ?? 0;
-
-  // Credit card usage level
-  let usageLevel: "low" | "medium" | "high" = "low";
-  let usageMessage = "";
-  if (stats?.total) {
-    if (stats.total > 5000) {
-      usageLevel = "high";
-      usageMessage = "Gastos altos este mês — vale revisar as categorias";
-    } else if (stats.total > 2000) {
-      usageLevel = "medium";
-      usageMessage = "Gastos moderados — fique de olho";
-    } else {
-      usageLevel = "low";
-      usageMessage = "Gastos controlados este mês";
+    // Top merchants
+    const merchantMap = new Map<string, { total: number; count: number }>();
+    for (const tx of expenses) {
+      const prev = merchantMap.get(tx.description) ?? { total: 0, count: 0 };
+      merchantMap.set(tx.description, { total: prev.total + tx.amount, count: prev.count + 1 });
     }
-  }
+    const topMerchants = [...merchantMap.entries()]
+      .map(([description, v]) => ({ description, ...v }))
+      .sort((a, b) => b.total - a.total)
+      .slice(0, 10);
 
+    // Monthly totals (last 6 months, always from all transactions)
+    const allExpenses = allTransactions.filter((t) => t.amount > 0);
+    const monthMap = new Map<string, { total: number; count: number }>();
+    for (const tx of allExpenses) {
+      const m = tx.date.substring(0, 7);
+      const prev = monthMap.get(m) ?? { total: 0, count: 0 };
+      monthMap.set(m, { total: prev.total + tx.amount, count: prev.count + 1 });
+    }
+    const monthlyTotals = [...monthMap.entries()]
+      .map(([month, v]) => ({ month, ...v }))
+      .sort((a, b) => a.month.localeCompare(b.month))
+      .slice(-6);
+
+    return { total, byCategory, topMerchants, monthlyTotals };
+  }, [monthTransactions, allTransactions]);
+
+  // Month-over-month trend
+  const prevMonthTotal = useMemo(() => {
+    if (!selectedMonth || months.length < 2) return 0;
+    const idx = months.indexOf(selectedMonth);
+    const prevMonth = months[idx + 1];
+    if (!prevMonth) return 0;
+    return allTransactions
+      .filter((t) => t.date.startsWith(prevMonth) && t.amount > 0)
+      .reduce((s, t) => s + t.amount, 0);
+  }, [allTransactions, selectedMonth, months]);
+
+  const trend = prevMonthTotal > 0 ? ((stats.total - prevMonthTotal) / prevMonthTotal) * 100 : null;
+  const topCategory = stats.byCategory[0];
+  const totalTransactions = stats.byCategory.reduce((s, c) => s + c.count, 0);
+
+  const usageLevel =
+    stats.total > 5000 ? "high" : stats.total > 2000 ? "medium" : "low";
+  const usageMessages = {
+    low: "Gastos controlados este mês",
+    medium: "Gastos moderados — fique de olho",
+    high: "Gastos altos este mês — vale revisar as categorias",
+  };
   const usageColors = {
     low: "bg-green-50 border-green-200 text-green-800",
     medium: "bg-yellow-50 border-yellow-200 text-yellow-800",
     high: "bg-red-50 border-red-200 text-red-800",
   };
-
   const usageIcons = {
     low: <TrendingDown size={16} className="text-green-600" />,
     medium: <AlertTriangle size={16} className="text-yellow-600" />,
     high: <TrendingUp size={16} className="text-red-600" />,
   };
+
+  async function handleClearAll() {
+    if (!confirm("Apagar todas as transações? Esta ação não pode ser desfeita.")) return;
+    await db.transactions.clear();
+    setSelectedMonth("");
+  }
+
+  async function handleRecategorize() {
+    setRecategorizing(true);
+    const rules = await db.categoryRules.toArray();
+    const all = await db.transactions.toArray();
+    await db.transactions.bulkPut(
+      all.map((tx) => ({ ...tx, category: categorizeTransaction(tx.description, rules) }))
+    );
+    setRecategorizing(false);
+  }
+
+  const hasData = months.length > 0;
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -127,31 +158,26 @@ export default function Dashboard() {
           </div>
 
           <div className="flex items-center gap-3">
-            {/* Month selector */}
-            {stats?.months?.length ? (
+            {hasData && (
               <select
                 value={selectedMonth}
-                onChange={(e) => {
-                  setSelectedMonth(e.target.value);
-                  setCategoryFilter("");
-                }}
+                onChange={(e) => { setSelectedMonth(e.target.value); setCategoryFilter(""); }}
                 className="text-sm border border-gray-200 rounded-lg px-3 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-purple-300 text-gray-700"
               >
                 <option value="">Todos os meses</option>
-                {stats.months.map((m) => (
+                {months.map((m) => (
                   <option key={m} value={m}>
                     {format(parseISO(`${m}-01`), "MMMM yyyy", { locale: ptBR })}
                   </option>
                 ))}
               </select>
-            ) : null}
-
-            {stats?.months?.length ? (
+            )}
+            {hasData && (
               <>
                 <button
                   onClick={handleRecategorize}
                   disabled={recategorizing}
-                  className="flex items-center gap-2 border border-gray-200 text-gray-600 px-3 py-1.5 rounded-lg text-sm font-medium hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="text-sm border border-gray-200 text-gray-600 px-3 py-1.5 rounded-lg font-medium hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {recategorizing ? "Recategorizando..." : "Recategorizar"}
                 </button>
@@ -163,7 +189,7 @@ export default function Dashboard() {
                   Limpar dados
                 </button>
               </>
-            ) : null}
+            )}
             <button
               onClick={() => setShowImport(true)}
               className="flex items-center gap-2 bg-purple-600 text-white px-4 py-1.5 rounded-lg text-sm font-medium hover:bg-purple-700 transition-colors"
@@ -174,8 +200,7 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* Tabs */}
-        <div className="max-w-6xl mx-auto px-4 flex gap-1 pb-0">
+        <div className="max-w-6xl mx-auto px-4 flex gap-1">
           {(["dashboard", "transactions"] as const).map((tab) => (
             <button
               key={tab}
@@ -195,15 +220,12 @@ export default function Dashboard() {
       <main className="max-w-6xl mx-auto px-4 py-6">
         {activeTab === "dashboard" ? (
           <div className="space-y-6">
-            {/* No data state */}
-            {!stats?.months?.length && (
+            {!hasData ? (
               <div className="text-center py-20">
                 <div className="w-16 h-16 bg-purple-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
                   <CreditCard size={28} className="text-purple-600" />
                 </div>
-                <h2 className="text-lg font-semibold text-gray-800 mb-2">
-                  Nenhum dado ainda
-                </h2>
+                <h2 className="text-lg font-semibold text-gray-800 mb-2">Nenhum dado ainda</h2>
                 <p className="text-sm text-gray-500 mb-6 max-w-sm mx-auto">
                   Importe seu extrato do Nubank para visualizar seus gastos no dashboard
                 </p>
@@ -215,26 +237,20 @@ export default function Dashboard() {
                   Importar extrato
                 </button>
               </div>
-            )}
-
-            {stats?.months?.length ? (
+            ) : (
               <>
-                {/* Usage alert */}
                 {stats.total > 0 && (
                   <div className={`flex items-center gap-2 px-4 py-3 rounded-xl border text-sm font-medium ${usageColors[usageLevel]}`}>
                     {usageIcons[usageLevel]}
-                    {usageMessage}
+                    {usageMessages[usageLevel]}
                   </div>
                 )}
 
-                {/* KPI cards */}
                 <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                   <StatCard
                     label="Total gasto"
                     value={formatBRL(stats.total)}
-                    sub={selectedMonth
-                      ? format(parseISO(`${selectedMonth}-01`), "MMMM yyyy", { locale: ptBR })
-                      : "Todos os meses"}
+                    sub={selectedMonth ? format(parseISO(`${selectedMonth}-01`), "MMMM yyyy", { locale: ptBR }) : "Todos os meses"}
                     color="purple"
                     icon={<CreditCard size={18} />}
                   />
@@ -261,37 +277,25 @@ export default function Dashboard() {
                   />
                 </div>
 
-                {/* Charts row */}
                 <div className="grid lg:grid-cols-2 gap-6">
-                  {/* Category pie */}
                   <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
                     <h2 className="font-semibold text-gray-800 mb-4">Gastos por categoria</h2>
                     <CategoryChart data={stats.byCategory} />
                   </div>
-
-                  {/* Monthly bar */}
                   <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
                     <h2 className="font-semibold text-gray-800 mb-4">Evolução mensal</h2>
-                    <MonthlyChart
-                      data={stats.monthlyTotals}
-                      currentMonth={selectedMonth}
-                    />
+                    <MonthlyChart data={stats.monthlyTotals} currentMonth={selectedMonth} />
                   </div>
                 </div>
 
-                {/* Category filter + top merchants */}
                 <div className="grid lg:grid-cols-2 gap-6">
-                  {/* Category breakdown */}
                   <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
                     <h2 className="font-semibold text-gray-800 mb-4">Por categoria</h2>
-                    <div className="space-y-2">
+                    <div className="space-y-1">
                       {stats.byCategory.map((cat) => (
                         <button
                           key={cat.category}
-                          onClick={() => {
-                            setCategoryFilter(categoryFilter === cat.category ? "" : cat.category);
-                            setActiveTab("transactions");
-                          }}
+                          onClick={() => { setCategoryFilter(cat.category); setActiveTab("transactions"); }}
                           className="w-full flex items-center justify-between px-3 py-2 rounded-lg hover:bg-purple-50 text-left transition-colors group"
                         >
                           <span className="text-sm text-gray-700 group-hover:text-purple-700">{cat.category}</span>
@@ -304,80 +308,51 @@ export default function Dashboard() {
                     </div>
                   </div>
 
-                  {/* Top merchants */}
                   <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
                     <h2 className="font-semibold text-gray-800 mb-4">Maiores gastos</h2>
-                    <div className="space-y-2">
+                    <div className="space-y-1">
                       {stats.topMerchants.map((m, i) => (
                         <div key={i} className="flex items-center justify-between px-3 py-2 rounded-lg">
                           <div className="flex items-center gap-3 min-w-0">
                             <span className="text-xs text-gray-400 w-5 shrink-0">{i + 1}.</span>
                             <span className="text-sm text-gray-700 truncate">{m.description}</span>
                           </div>
-                          <span className="text-sm font-semibold text-gray-800 ml-2 shrink-0">
-                            {formatBRL(m.total)}
-                          </span>
+                          <span className="text-sm font-semibold text-gray-800 ml-2 shrink-0">{formatBRL(m.total)}</span>
                         </div>
                       ))}
                     </div>
                   </div>
                 </div>
               </>
-            ) : null}
+            )}
           </div>
         ) : (
-          /* Transactions tab */
           <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
             <div className="flex items-center justify-between mb-4">
               <h2 className="font-semibold text-gray-800">Transações</h2>
               {categoryFilter && (
                 <div className="flex items-center gap-2">
-                  <span className="text-sm text-purple-700 bg-purple-100 px-3 py-1 rounded-full">
-                    {categoryFilter}
-                  </span>
-                  <button
-                    onClick={() => setCategoryFilter("")}
-                    className="text-xs text-gray-400 hover:text-gray-600"
-                  >
+                  <span className="text-sm text-purple-700 bg-purple-100 px-3 py-1 rounded-full">{categoryFilter}</span>
+                  <button onClick={() => setCategoryFilter("")} className="text-xs text-gray-400 hover:text-gray-600">
                     limpar
                   </button>
                 </div>
               )}
             </div>
-            <TransactionList
-              month={selectedMonth}
-              categoryFilter={categoryFilter}
-              onRefresh={fetchStats}
-            />
+            <TransactionList month={selectedMonth} categoryFilter={categoryFilter} />
           </div>
         )}
       </main>
 
       {showImport && (
-        <ImportModal
-          onClose={() => setShowImport(false)}
-          onSuccess={() => {
-            fetchStats();
-            setShowImport(false);
-          }}
-        />
+        <ImportModal onClose={() => setShowImport(false)} onSuccess={() => setShowImport(false)} />
       )}
     </div>
   );
 }
 
-function StatCard({
-  label,
-  value,
-  sub,
-  color,
-  icon,
-}: {
-  label: string;
-  value: string;
-  sub: string;
-  color: string;
-  icon: React.ReactNode;
+function StatCard({ label, value, sub, color, icon }: {
+  label: string; value: string; sub: string; color: string; icon: React.ReactNode;
 }) {
   const colorMap: Record<string, string> = {
     purple: "bg-purple-50 text-purple-600",
@@ -387,7 +362,6 @@ function StatCard({
     green: "bg-green-50 text-green-600",
     gray: "bg-gray-100 text-gray-500",
   };
-
   return (
     <div className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100">
       <div className={`w-9 h-9 rounded-xl flex items-center justify-center mb-3 ${colorMap[color] ?? colorMap.gray}`}>

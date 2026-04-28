@@ -2,6 +2,8 @@
 
 import { useState, useRef } from "react";
 import { Upload, X, FileText, CheckCircle, AlertCircle, Info, Loader2 } from "lucide-react";
+import { db } from "@/lib/db.client";
+import { parseNubankCSV } from "@/lib/categorize";
 
 interface Props {
   onClose: () => void;
@@ -12,7 +14,6 @@ interface FileStatus {
   file: File;
   status: "pending" | "uploading" | "done" | "error";
   imported?: number;
-  total?: number;
   error?: string;
 }
 
@@ -27,9 +28,9 @@ export default function ImportModal({ onClose, onSuccess }: Props) {
     const csvFiles = Array.from(incoming).filter((f) => f.name.endsWith(".csv"));
     if (!csvFiles.length) return;
     setFiles((prev) => {
-      const existingNames = new Set(prev.map((f) => f.file.name));
+      const existing = new Set(prev.map((f) => f.file.name));
       const newOnes = csvFiles
-        .filter((f) => !existingNames.has(f.name))
+        .filter((f) => !existing.has(f.name))
         .map((f) => ({ file: f, status: "pending" as const }));
       return [...prev, ...newOnes];
     });
@@ -42,7 +43,8 @@ export default function ImportModal({ onClose, onSuccess }: Props) {
   async function handleImport() {
     if (!files.length) return;
     setLoading(true);
-    setDone(false);
+
+    const rules = await db.categoryRules.toArray();
 
     for (const entry of files) {
       if (entry.status === "done") continue;
@@ -51,35 +53,35 @@ export default function ImportModal({ onClose, onSuccess }: Props) {
         prev.map((f) => f.file.name === entry.file.name ? { ...f, status: "uploading" } : f)
       );
 
-      const formData = new FormData();
-      formData.append("file", entry.file);
-
       try {
-        const res = await fetch("/api/import", { method: "POST", body: formData });
-        const data = await res.json();
+        const text = await entry.file.text();
+        const transactions = parseNubankCSV(text, rules);
 
-        if (!res.ok) {
+        if (!transactions.length) {
           setFiles((prev) =>
             prev.map((f) =>
               f.file.name === entry.file.name
-                ? { ...f, status: "error", error: data.error ?? "Falha na importação" }
+                ? { ...f, status: "error", error: "Nenhuma transação encontrada" }
                 : f
             )
           );
-        } else {
-          setFiles((prev) =>
-            prev.map((f) =>
-              f.file.name === entry.file.name
-                ? { ...f, status: "done", imported: data.imported, total: data.total }
-                : f
-            )
-          );
+          continue;
         }
+
+        await db.transactions.bulkAdd(transactions);
+
+        setFiles((prev) =>
+          prev.map((f) =>
+            f.file.name === entry.file.name
+              ? { ...f, status: "done", imported: transactions.length }
+              : f
+          )
+        );
       } catch {
         setFiles((prev) =>
           prev.map((f) =>
             f.file.name === entry.file.name
-              ? { ...f, status: "error", error: "Erro de conexão" }
+              ? { ...f, status: "error", error: "Erro ao processar arquivo" }
               : f
           )
         );
@@ -106,7 +108,6 @@ export default function ImportModal({ onClose, onSuccess }: Props) {
         </div>
 
         <div className="p-6 space-y-4">
-          {/* Instructions */}
           <div className="bg-purple-50 rounded-xl p-4 flex gap-3">
             <Info size={16} className="text-purple-600 mt-0.5 shrink-0" />
             <div className="text-sm text-purple-800 space-y-1">
@@ -121,7 +122,6 @@ export default function ImportModal({ onClose, onSuccess }: Props) {
             </div>
           </div>
 
-          {/* Drop zone */}
           {!allDone && (
             <div
               className={`border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition-colors ${
@@ -158,7 +158,6 @@ export default function ImportModal({ onClose, onSuccess }: Props) {
             </div>
           )}
 
-          {/* File list */}
           {files.length > 0 && (
             <div className="space-y-2 max-h-52 overflow-y-auto">
               {files.map((entry) => (
@@ -179,7 +178,6 @@ export default function ImportModal({ onClose, onSuccess }: Props) {
                       <p className="text-xs text-gray-400">{(entry.file.size / 1024).toFixed(1)} KB</p>
                     )}
                   </div>
-
                   {entry.status === "pending" && !loading && (
                     <button
                       onClick={(e) => { e.stopPropagation(); removeFile(entry.file.name); }}
@@ -202,14 +200,13 @@ export default function ImportModal({ onClose, onSuccess }: Props) {
             </div>
           )}
 
-          {/* Summary after all done */}
           {done && allDone && (
             <div className="flex items-center gap-3 text-green-700 bg-green-50 rounded-xl p-4">
               <CheckCircle size={22} />
               <div>
                 <p className="font-semibold">Importação concluída!</p>
                 <p className="text-sm text-green-600">
-                  {totalImported} transações importadas de {files.filter(f => f.status === "done").length} arquivo(s)
+                  {totalImported} transações importadas de {files.filter((f) => f.status === "done").length} arquivo(s)
                 </p>
               </div>
             </div>
@@ -238,7 +235,7 @@ export default function ImportModal({ onClose, onSuccess }: Props) {
                 className="flex-1 bg-purple-600 text-white py-2.5 rounded-xl font-medium hover:bg-purple-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {loading
-                  ? `Importando...`
+                  ? "Importando..."
                   : `Importar ${files.length > 1 ? `${files.length} arquivos` : "arquivo"}`}
               </button>
             </>

@@ -1,22 +1,15 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useLiveQuery } from "dexie-react-hooks";
 import { format, parseISO } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { Pencil, Trash2 } from "lucide-react";
-
-interface Transaction {
-  id: number;
-  date: string;
-  description: string;
-  amount: number;
-  category: string;
-}
+import { useState } from "react";
+import { db } from "@/lib/db.client";
 
 interface Props {
   month?: string;
   categoryFilter?: string;
-  onRefresh?: () => void;
 }
 
 const CATEGORIES = [
@@ -24,10 +17,6 @@ const CATEGORIES = [
   "Entretenimento", "Compras", "Serviços", "Educação", "Viagem",
   "Pets", "Tecnologia", "Móveis", "Outros",
 ];
-
-function formatBRL(value: number) {
-  return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(value);
-}
 
 const CATEGORY_COLORS: Record<string, string> = {
   "Alimentação": "bg-orange-100 text-orange-700",
@@ -45,42 +34,37 @@ const CATEGORY_COLORS: Record<string, string> = {
   "Outros": "bg-gray-100 text-gray-600",
 };
 
-export default function TransactionList({ month, categoryFilter, onRefresh }: Props) {
-  const [transactions, setTransactions] = useState<Transaction[]>([]);
+function formatBRL(value: number) {
+  return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(value);
+}
+
+export default function TransactionList({ month, categoryFilter }: Props) {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editCategory, setEditCategory] = useState("");
 
-  const fetchTransactions = useCallback(async () => {
-    const params = new URLSearchParams();
-    if (month) params.set("month", month);
-    if (categoryFilter) params.set("category", categoryFilter);
+  const transactions = useLiveQuery(async () => {
+    let query = db.transactions.orderBy("date").reverse();
 
-    const res = await fetch(`/api/transactions?${params}`);
-    const data = await res.json();
-    setTransactions(data.transactions ?? []);
+    const all = await query.toArray();
+
+    return all.filter((tx) => {
+      if (month && !tx.date.startsWith(month)) return false;
+      if (categoryFilter && tx.category !== categoryFilter) return false;
+      return true;
+    });
   }, [month, categoryFilter]);
-
-  useEffect(() => {
-    fetchTransactions();
-  }, [fetchTransactions]);
 
   async function handleDelete(id: number) {
     if (!confirm("Remover esta transação?")) return;
-    await fetch(`/api/transactions?id=${id}`, { method: "DELETE" });
-    fetchTransactions();
-    onRefresh?.();
+    await db.transactions.delete(id);
   }
 
   async function handleSaveCategory(id: number) {
-    await fetch("/api/transactions", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id, category: editCategory }),
-    });
+    await db.transactions.update(id, { category: editCategory });
     setEditingId(null);
-    fetchTransactions();
-    onRefresh?.();
   }
+
+  if (!transactions) return null;
 
   if (!transactions.length) {
     return (
@@ -108,7 +92,7 @@ export default function TransactionList({ month, categoryFilter, onRefresh }: Pr
                   value={editCategory}
                   onChange={(e) => setEditCategory(e.target.value)}
                   className="text-xs border border-purple-300 rounded-md px-1 py-0.5 focus:outline-none focus:ring-1 focus:ring-purple-400"
-                  onBlur={() => handleSaveCategory(tx.id)}
+                  onBlur={() => handleSaveCategory(tx.id!)}
                   autoFocus
                 >
                   {CATEGORIES.map((c) => (
@@ -121,7 +105,7 @@ export default function TransactionList({ month, categoryFilter, onRefresh }: Pr
                     CATEGORY_COLORS[tx.category] ?? "bg-gray-100 text-gray-600"
                   }`}
                   onClick={() => {
-                    setEditingId(tx.id);
+                    setEditingId(tx.id!);
                     setEditCategory(tx.category);
                   }}
                 >
@@ -140,16 +124,13 @@ export default function TransactionList({ month, categoryFilter, onRefresh }: Pr
             </span>
             <div className="hidden group-hover:flex items-center gap-1">
               <button
-                onClick={() => {
-                  setEditingId(tx.id);
-                  setEditCategory(tx.category);
-                }}
+                onClick={() => { setEditingId(tx.id!); setEditCategory(tx.category); }}
                 className="p-1 text-gray-400 hover:text-purple-600 transition-colors"
               >
                 <Pencil size={14} />
               </button>
               <button
-                onClick={() => handleDelete(tx.id)}
+                onClick={() => handleDelete(tx.id!)}
                 className="p-1 text-gray-400 hover:text-red-500 transition-colors"
               >
                 <Trash2 size={14} />
