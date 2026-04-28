@@ -1,36 +1,76 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# FinanceApp — Nubank Expense Dashboard
 
-## Getting Started
+I created this project because I wanted a simple way to see where my money is going every month. I import my Nubank credit card statements and the app automatically groups everything into categories so I can see at a glance if I'm overspending on food, transport, subscriptions, and so on.
 
-First, run the development server:
+The more people use and contribute to this, the better the auto-categorization gets for everyone.
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+## What it does
+
+- Import one or multiple Nubank CSV exports at once
+- Automatically categorizes every transaction by keyword matching
+- Dashboard with total spent, breakdown by category (pie chart), monthly trend (bar chart), and top merchants
+- Filter by month or category
+- Click any category tag on a transaction to change it manually
+- **Recategorizar** button re-applies all rules to existing data
+- All data stays in your browser — nothing is sent to any server
+
+## Your data is safe
+
+This app uses **IndexedDB** (browser local storage) to store your transactions. No server, no database, no account required. Your financial data never leaves your computer. If you open the app on a different browser or device it starts fresh — your data only exists where you imported it.
+
+## How to use
+
+1. Open the app
+2. Click **Importar extrato**
+3. Export your Nubank invoice as CSV: Nubank app → Cartão de Crédito → select invoice → Exportar planilha
+4. Upload the file (you can select multiple months at once)
+5. Done — your dashboard is ready
+
+## How to contribute
+
+If you import your CSV and see transactions landing in **Outros** that should belong to a real category, you can help fix it for everyone by adding keywords.
+
+### Step by step
+
+1. Fork this repository
+2. Open `lib/categorize.ts`
+3. Find the right category section and add your keyword:
+
+```ts
+// Example: adding a regional supermarket
+{ keyword: "nome do mercado", category: "Supermercado" },
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+4. Use Claude (or any AI) to speed this up — paste your CSV and say:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+   > *"Read this CSV. Which transactions would be categorized as 'Outros'? Help me add the right keywords to `lib/categorize.ts` to fix them."*
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+5. Open a pull request describing which merchants you added and what category they belong to
 
-## Learn More
+### Guidelines
 
-To learn more about Next.js, take a look at the following resources:
+- Keywords are matched as substrings, case-insensitive, and accent-insensitive
+- Put more specific keywords before generic ones (e.g. `"mercado livre"` before `"mercado"`)
+- Avoid keywords shorter than 4 characters — they can accidentally match unrelated merchants
+- When in doubt about the category, leave a comment in the PR
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Running locally
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```bash
+npm install
+npm run dev
+```
 
-## Deploy on Vercel
+Open [http://localhost:3000](http://localhost:3000).
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Tech stack
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- [Next.js](https://nextjs.org) — React framework
+- [Dexie.js](https://dexie.org) — IndexedDB wrapper (client-side storage)
+- [Recharts](https://recharts.org) — charts
+- [Tailwind CSS](https://tailwindcss.com) — styling
+- [date-fns](https://date-fns.org) — date formatting
+
+---
+
+Made by [@raryson](https://github.com/raryson) · [github.com/raryson/financial-app](https://github.com/raryson/financial-app)
