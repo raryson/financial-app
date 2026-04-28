@@ -1,8 +1,10 @@
-# FinanceApp — Nubank Expense Dashboard
+# FinanceApp — Expense Dashboard
 
 I created this project because I wanted a simple way to see where my money is going every month. I import my Nubank credit card statements and the app automatically groups everything into categories so I can see at a glance if I'm overspending on food, transport, subscriptions, and so on.
 
 The more people use and contribute to this, the better the auto-categorization gets for everyone.
+
+> **Works with any bank** — as long as your bank lets you export your statement as a CSV file, this app can read it. The CSV just needs columns for date, description, and amount. Nubank, Inter, C6, Itaú, Bradesco, or any other bank that supports CSV export should work.
 
 ## What it does
 
@@ -22,7 +24,9 @@ This app uses **IndexedDB** (browser local storage) to store your transactions. 
 
 1. Open the app
 2. Click **Importar extrato**
-3. Export your Nubank invoice as CSV: Nubank app → Cartão de Crédito → select invoice → Exportar planilha
+3. Export your statement as CSV from your bank:
+   - **Nubank**: app → Cartão de Crédito → select invoice → Exportar planilha
+   - **Other banks**: look for "Export", "Download", or "Extrato" options — any CSV with date, description, and amount columns will work
 4. Upload the file (you can select multiple months at once)
 5. Done — your dashboard is ready
 
