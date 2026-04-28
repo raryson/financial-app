@@ -44,8 +44,6 @@ export default function ImportModal({ onClose, onSuccess }: Props) {
     if (!files.length) return;
     setLoading(true);
 
-    const rules = await db.categoryRules.toArray();
-
     for (const entry of files) {
       if (entry.status === "done") continue;
 
@@ -55,7 +53,7 @@ export default function ImportModal({ onClose, onSuccess }: Props) {
 
       try {
         const text = await entry.file.text();
-        const transactions = parseNubankCSV(text, rules);
+        const transactions = parseNubankCSV(text);
 
         if (!transactions.length) {
           setFiles((prev) =>

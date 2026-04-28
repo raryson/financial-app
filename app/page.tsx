@@ -133,10 +133,9 @@ export default function Dashboard() {
 
   async function handleRecategorize() {
     setRecategorizing(true);
-    const rules = await db.categoryRules.toArray();
     const all = await db.transactions.toArray();
     await db.transactions.bulkPut(
-      all.map((tx) => ({ ...tx, category: categorizeTransaction(tx.description, rules) }))
+      all.map((tx) => ({ ...tx, category: categorizeTransaction(tx.description) }))
     );
     setRecategorizing(false);
   }
