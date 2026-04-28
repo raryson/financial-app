@@ -10,7 +10,7 @@ import {
 import dynamic from "next/dynamic";
 import ImportModal from "@/components/ImportModal";
 import TransactionList from "@/components/TransactionList";
-import { db, seedRules } from "@/lib/db.client";
+import { db } from "@/lib/db.client";
 import { categorizeTransaction } from "@/lib/categorize";
 
 const CategoryChart = dynamic(() => import("@/components/CategoryChart"), { ssr: false });
@@ -27,8 +27,6 @@ export default function Dashboard() {
   const [activeTab, setActiveTab] = useState<"dashboard" | "transactions">("dashboard");
   const [recategorizing, setRecategorizing] = useState(false);
 
-  // Seed default rules on first load
-  useEffect(() => { seedRules(); }, []);
 
   // Load all transactions reactively
   const allTransactions = useLiveQuery(() => db.transactions.toArray(), []) ?? [];
