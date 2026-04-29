@@ -1,6 +1,7 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { Analytics } from "@vercel/analytics/next";
+import { PwaProvider } from "@/components/PwaProvider";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -41,6 +42,10 @@ export const metadata: Metadata = {
   robots: { index: true, follow: true },
 };
 
+export const viewport: Viewport = {
+  themeColor: "#820ad1",
+};
+
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -54,6 +59,7 @@ export default function RootLayout({
       <body className="min-h-full flex flex-col">
         {children}
         <Analytics />
+        <PwaProvider />
         <footer className="mt-auto border-t border-gray-100 bg-white py-4 px-4">
           <div className="max-w-6xl mx-auto flex items-center justify-between">
             <p className="text-xs text-gray-400">
