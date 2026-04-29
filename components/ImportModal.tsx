@@ -3,7 +3,7 @@
 import { useState, useRef } from "react";
 import { Upload, X, FileText, CheckCircle, AlertCircle, Info, Loader2 } from "lucide-react";
 import { db } from "@/lib/db.client";
-import { parseNubankCSV } from "@/lib/categorize";
+import { parseNubankCSV, detectCsvAccountType } from "@/lib/categorize";
 
 interface Props {
   onClose: () => void;
@@ -13,6 +13,7 @@ interface Props {
 interface FileStatus {
   file: File;
   status: "pending" | "uploading" | "done" | "error";
+  accountType: 'credit' | 'debit';
   imported?: number;
   error?: string;
 }
@@ -24,20 +25,35 @@ export default function ImportModal({ onClose, onSuccess }: Props) {
   const [dragging, setDragging] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  function addFiles(incoming: FileList | File[]) {
+  async function addFiles(incoming: FileList | File[]) {
     const csvFiles = Array.from(incoming).filter((f) => f.name.endsWith(".csv"));
     if (!csvFiles.length) return;
+
+    const newEntries: FileStatus[] = [];
+    for (const f of csvFiles) {
+      const snippet = await f.slice(0, 300).text();
+      const accountType = detectCsvAccountType(snippet);
+      newEntries.push({ file: f, status: "pending", accountType });
+    }
+
     setFiles((prev) => {
       const existing = new Set(prev.map((f) => f.file.name));
-      const newOnes = csvFiles
-        .filter((f) => !existing.has(f.name))
-        .map((f) => ({ file: f, status: "pending" as const }));
-      return [...prev, ...newOnes];
+      return [...prev, ...newEntries.filter((e) => !existing.has(e.file.name))];
     });
   }
 
   function removeFile(name: string) {
     setFiles((prev) => prev.filter((f) => f.file.name !== name));
+  }
+
+  function toggleFileType(name: string) {
+    setFiles((prev) =>
+      prev.map((f) =>
+        f.file.name === name
+          ? { ...f, accountType: f.accountType === 'credit' ? 'debit' : 'credit' }
+          : f
+      )
+    );
   }
 
   async function handleImport() {
@@ -53,7 +69,7 @@ export default function ImportModal({ onClose, onSuccess }: Props) {
 
       try {
         const text = await entry.file.text();
-        const transactions = parseNubankCSV(text);
+        const transactions = parseNubankCSV(text, entry.accountType);
 
         if (!transactions.length) {
           setFiles((prev) =>
@@ -66,12 +82,20 @@ export default function ImportModal({ onClose, onSuccess }: Props) {
           continue;
         }
 
-        await db.transactions.bulkAdd(transactions);
+        const incomingIds = transactions.map((t) => t.externalId).filter(Boolean) as string[];
+        let toAdd = transactions;
+        if (incomingIds.length > 0) {
+          const existing = await db.transactions.where("externalId").anyOf(incomingIds).toArray();
+          const existingIds = new Set(existing.map((t) => t.externalId!));
+          toAdd = transactions.filter((t) => !t.externalId || !existingIds.has(t.externalId));
+        }
+
+        await db.transactions.bulkAdd(toAdd);
 
         setFiles((prev) =>
           prev.map((f) =>
             f.file.name === entry.file.name
-              ? { ...f, status: "done", imported: transactions.length }
+              ? { ...f, status: "done", imported: toAdd.length }
               : f
           )
         );
@@ -99,7 +123,7 @@ export default function ImportModal({ onClose, onSuccess }: Props) {
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-2xl w-full max-w-lg shadow-2xl">
         <div className="flex items-center justify-between p-6 border-b">
-          <h2 className="text-lg font-semibold text-gray-900">Importar extratos Nubank</h2>
+          <h2 className="text-lg font-semibold text-gray-900">Importar extratos</h2>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 transition-colors">
             <X size={20} />
           </button>
@@ -109,14 +133,8 @@ export default function ImportModal({ onClose, onSuccess }: Props) {
           <div className="bg-purple-50 rounded-xl p-4 flex gap-3">
             <Info size={16} className="text-purple-600 mt-0.5 shrink-0" />
             <div className="text-sm text-purple-800 space-y-1">
-              <p className="font-medium">Como exportar do Nubank:</p>
-              <ol className="list-decimal list-inside space-y-0.5 text-purple-700">
-                <li>Abra o app Nubank</li>
-                <li>Vá em <strong>Cartão de Crédito</strong></li>
-                <li>Selecione a fatura</li>
-                <li>Toque em <strong>Exportar planilha</strong></li>
-                <li>Salve o arquivo .csv</li>
-              </ol>
+              <p className="font-medium">Compatível com cartão de crédito e conta corrente (débito).</p>
+              <p className="text-purple-700">O tipo é detectado automaticamente — toque no badge <span className="inline-block bg-purple-100 text-purple-700 text-xs px-1.5 py-0.5 rounded-full font-medium">Crédito</span> ou <span className="inline-block bg-teal-100 text-teal-700 text-xs px-1.5 py-0.5 rounded-full font-medium">Débito</span> para corrigir se necessário.</p>
             </div>
           </div>
 
@@ -165,7 +183,23 @@ export default function ImportModal({ onClose, onSuccess }: Props) {
                 >
                   <FileText size={16} className="text-gray-400 shrink-0" />
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-gray-700 truncate">{entry.file.name}</p>
+                    <div className="flex items-center gap-2">
+                      <p className="text-sm font-medium text-gray-700 truncate">{entry.file.name}</p>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (entry.status === "pending") toggleFileType(entry.file.name);
+                        }}
+                        disabled={entry.status !== "pending" || loading}
+                        className={`shrink-0 text-xs px-2 py-0.5 rounded-full font-medium transition-colors ${
+                          entry.accountType === 'credit'
+                            ? "bg-purple-100 text-purple-700 hover:bg-purple-200"
+                            : "bg-teal-100 text-teal-700 hover:bg-teal-200"
+                        } disabled:cursor-default`}
+                      >
+                        {entry.accountType === 'credit' ? 'Crédito' : 'Débito'}
+                      </button>
+                    </div>
                     {entry.status === "done" && (
                       <p className="text-xs text-green-600">{entry.imported} transações importadas</p>
                     )}

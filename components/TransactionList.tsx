@@ -15,7 +15,8 @@ interface Props {
 const CATEGORIES = [
   "Alimentação", "Supermercado", "Transporte", "Saúde",
   "Entretenimento", "Compras", "Serviços", "Educação", "Viagem",
-  "Pets", "Tecnologia", "Móveis", "Outros",
+  "Pets", "Tecnologia", "Móveis", "Transferências", "Boletos",
+  "Investimentos", "Receitas", "Outros",
 ];
 
 const CATEGORY_COLORS: Record<string, string> = {
@@ -31,6 +32,10 @@ const CATEGORY_COLORS: Record<string, string> = {
   "Pets": "bg-lime-100 text-lime-700",
   "Tecnologia": "bg-violet-100 text-violet-700",
   "Móveis": "bg-amber-100 text-amber-700",
+  "Transferências": "bg-sky-100 text-sky-700",
+  "Boletos": "bg-rose-100 text-rose-700",
+  "Investimentos": "bg-emerald-100 text-emerald-700",
+  "Receitas": "bg-green-100 text-green-700",
   "Outros": "bg-gray-100 text-gray-600",
 };
 
@@ -119,6 +124,13 @@ export default function TransactionList({ month, categoryFilter }: Props) {
           </div>
 
           <div className="flex items-center gap-2 shrink-0">
+            {tx.accountType && (
+              <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${
+                tx.accountType === 'credit' ? "bg-purple-50 text-purple-400" : "bg-teal-50 text-teal-500"
+              }`}>
+                {tx.accountType === 'credit' ? 'C' : 'D'}
+              </span>
+            )}
             <span className={`text-sm font-semibold ${tx.amount > 0 ? "text-red-600" : "text-green-600"}`}>
               {tx.amount > 0 ? "-" : "+"}{formatBRL(Math.abs(tx.amount))}
             </span>

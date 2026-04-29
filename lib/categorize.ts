@@ -3,6 +3,12 @@ export type CategoryRule = { keyword: string; category: string };
 // Plain constant — no database, no async, no timing issues.
 // First match wins, so more specific keywords must come before generic ones.
 export const CATEGORY_RULES: CategoryRule[] = [
+  // ── Transferências / Boletos (debit-specific, must come first) ───
+  { keyword: "transferencia enviada", category: "Transferências" },
+  { keyword: "transferencia recebida", category: "Receitas" },
+  { keyword: "pagamento de boleto", category: "Boletos" },
+  { keyword: "resgate rdb", category: "Investimentos" },
+
   // ── Alimentação ──────────────────────────────────────────────────
   { keyword: "ifood", category: "Alimentação" },
   { keyword: "ifd*ifood", category: "Alimentação" },
@@ -32,6 +38,10 @@ export const CATEGORY_RULES: CategoryRule[] = [
   { keyword: "bistro", category: "Alimentação" },
   { keyword: "grill", category: "Alimentação" },
   { keyword: "stanzad", category: "Alimentação" },
+  { keyword: "capannoli", category: "Alimentação" },
+  { keyword: "casa di pietro", category: "Alimentação" },
+  { keyword: "woking", category: "Alimentação" },
+  { keyword: "thaifood", category: "Alimentação" },
   { keyword: "coco bambu", category: "Alimentação" },
   { keyword: "el estanciero", category: "Alimentação" },
   { keyword: "estanciero", category: "Alimentação" },
@@ -95,6 +105,8 @@ export const CATEGORY_RULES: CategoryRule[] = [
   { keyword: "petrobras", category: "Transporte" },
   { keyword: "ipiranga", category: "Transporte" },
   { keyword: "estacionamento", category: "Transporte" },
+  { keyword: "parking", category: "Transporte" },
+  { keyword: "apolo filial", category: "Transporte" },
   { keyword: "autopark", category: "Transporte" },
   { keyword: "indigo park", category: "Transporte" },
   { keyword: "sem parar", category: "Transporte" },
@@ -230,6 +242,11 @@ function normalize(str: string) {
   return str.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 }
 
+export function detectCsvAccountType(csvText: string): 'credit' | 'debit' {
+  const firstLine = csvText.split('\n')[0] ?? '';
+  return normalize(firstLine).includes('identificador') ? 'debit' : 'credit';
+}
+
 export function categorizeTransaction(description: string): string {
   const lower = normalize(description);
   for (const rule of CATEGORY_RULES) {
@@ -241,8 +258,9 @@ export function categorizeTransaction(description: string): string {
 }
 
 export function parseNubankCSV(
-  csvText: string
-): Array<{ date: string; description: string; amount: number; category: string }> {
+  csvText: string,
+  accountTypeOverride?: 'credit' | 'debit'
+): Array<{ date: string; description: string; amount: number; category: string; accountType: 'credit' | 'debit'; externalId?: string }> {
   const lines = csvText.trim().split("\n");
   if (lines.length < 2) return [];
 
@@ -262,10 +280,14 @@ export function parseNubankCSV(
   const titleIdx = idx(["title", "titulo", "descricao", "description"]);
   const amountIdx = idx(["amount", "valor"]);
   const categoryIdx = idx(["category", "categoria"]);
+  const externalIdIdx = idx(["identificador"]);
 
   if (dateIdx === -1 || amountIdx === -1) return [];
 
-  const results: Array<{ date: string; description: string; amount: number; category: string }> = [];
+  // Debit CSV has "Identificador" column; credit does not
+  const accountType = accountTypeOverride ?? detectCsvAccountType(csvText);
+
+  const results: Array<{ date: string; description: string; amount: number; category: string; accountType: 'credit' | 'debit'; externalId?: string }> = [];
 
   for (let i = 1; i < lines.length; i++) {
     const line = lines[i].trim();
@@ -277,18 +299,23 @@ export function parseNubankCSV(
     const rawAmount = cols[amountIdx] ?? "0";
     const description = titleIdx !== -1 ? (cols[titleIdx] ?? "") : "";
     let category = categoryIdx !== -1 ? (cols[categoryIdx] ?? "") : "";
+    const externalId = externalIdIdx !== -1 ? (cols[externalIdIdx] || undefined) : undefined;
 
     const date = normalizeDate(rawDate);
     if (!date || !description) continue;
 
-    const amount = parseFloat(rawAmount.replace(",", "."));
-    if (isNaN(amount)) continue;
+    const parsed = parseFloat(rawAmount.replace(",", "."));
+    if (isNaN(parsed)) continue;
+
+    // Debit CSV: negative = expense, positive = income.
+    // We negate so expenses become positive (matching the existing t.amount > 0 convention).
+    const amount = accountType === 'debit' ? -parsed : parsed;
 
     if (!category || category === "-") {
       category = categorizeTransaction(description);
     }
 
-    results.push({ date, description, amount, category });
+    results.push({ date, description, amount, category, accountType, externalId });
   }
 
   return results;

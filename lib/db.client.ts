@@ -7,6 +7,8 @@ export interface Transaction {
   amount: number;
   category: string;
   source?: string;
+  accountType?: 'credit' | 'debit';
+  externalId?: string;
 }
 
 class FinanceDB extends Dexie {
@@ -26,6 +28,10 @@ class FinanceDB extends Dexie {
     this.version(3).stores({
       transactions: "++id, date, category",
       categoryRules: null,
+    });
+    // v4: index externalId for deduplication on re-import
+    this.version(4).stores({
+      transactions: "++id, date, category, externalId",
     });
   }
 }
