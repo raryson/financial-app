@@ -13,9 +13,32 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+const baseUrl =
+  process.env.NEXT_PUBLIC_BASE_URL ??
+  (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000");
+
 export const metadata: Metadata = {
-  title: "FinanceApp — Nubank Dashboard",
-  description: "Acompanhe seus gastos do Nubank",
+  metadataBase: new URL(baseUrl),
+  title: "FinanceApp — Dashboard de Gastos do Nubank",
+  description:
+    "Visualize e analise seus gastos do Nubank por categoria e mês. Importe seu extrato CSV e veja seus dados 100% no navegador — nenhum dado é enviado a servidores.",
+  keywords: ["nubank", "finanças pessoais", "controle de gastos", "extrato nubank", "dashboard financeiro", "CSV nubank"],
+  authors: [{ name: "Raryson Pereira Rost" }],
+  openGraph: {
+    title: "FinanceApp — Dashboard de Gastos do Nubank",
+    description:
+      "Visualize e analise seus gastos do Nubank por categoria e mês. 100% no navegador, sem envio de dados.",
+    type: "website",
+    locale: "pt_BR",
+    siteName: "FinanceApp",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "FinanceApp — Dashboard de Gastos do Nubank",
+    description:
+      "Visualize e analise seus gastos do Nubank por categoria e mês. 100% no navegador, sem envio de dados.",
+  },
+  robots: { index: true, follow: true },
 };
 
 export default function RootLayout({
@@ -25,7 +48,7 @@ export default function RootLayout({
 }>) {
   return (
     <html
-      lang="en"
+      lang="pt-BR"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col">
